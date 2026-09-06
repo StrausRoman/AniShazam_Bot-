@@ -27,6 +27,11 @@ CONSENSUS_VOTES = 3            # сколько совпадений одног�
 CONSENSUS_SIMILARITY = 0.90    # средняя схожесть для досрочной остановки
 REQUEST_DELAY = 1.3            # пауза между запросами к trace.moe (лимит ~15 запросов/мин)
 
+# Обрезка кадра — убираем зоны, где TikTok обычно рисует текст/подписи/юзернейм,
+# чтобы наложенный текст не портил сравнение с оригинальным аниме-кадром
+CROP_TOP_RATIO = 0.08     # убираем верхние 8% (шапка, иконки)
+CROP_BOTTOM_RATIO = 0.20  # убираем нижние 20% (подпись, музыка, юзернейм)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -74,8 +79,21 @@ def generate_round_percentages(rounds: int, per_round: int) -> list[list[float]]
     return result
 
 
+def crop_overlay_regions(frame):
+    """
+    Обрезает верх и низ кадра, где TikTok обычно размещает текст, подписи,
+    юзернейм и иконки — это снижает влияние наложенного текста на распознавание.
+    """
+    height, width = frame.shape[:2]
+    top = int(height * CROP_TOP_RATIO)
+    bottom = int(height * (1 - CROP_BOTTOM_RATIO))
+    if bottom <= top:
+        return frame  # на случай совсем маленького видео — не обрезаем
+    return frame[top:bottom, :]
+
+
 def extract_frame_at_percentage(video_path: str, tmp_dir: str, percentage: float, idx: int) -> str | None:
-    """Вырезает один кадр на заданном проценте длительности видео."""
+    """Вырезает один кадр на заданном проценте длительности видео и обрезает зоны с текстом."""
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if total_frames <= 0:
@@ -89,6 +107,8 @@ def extract_frame_at_percentage(video_path: str, tmp_dir: str, percentage: float
 
     if not ok:
         return None
+
+    frame = crop_overlay_regions(frame)
 
     frame_path = os.path.join(tmp_dir, f"frame_{idx}.jpg")
     cv2.imwrite(frame_path, frame)
